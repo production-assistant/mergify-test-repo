@@ -1,0 +1,8 @@
+queue_rules:
+  - name: default
+    queue_conditions:
+      - base=main
+      - -closed
+      - -conflict
+      - label=mergeme
+    merge_method: merge
