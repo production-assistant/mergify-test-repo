@@ -1,8 +1,26 @@
+pull_request_rules:
+    - name: Automatic merge ⬇ on approval ✔
+      conditions:
+          - base=main
+          - -closed
+          - -conflict
+          - label=mergeme
+      actions:
+          queue:
+              commit_message_template: |
+                  {{title}} (#{{number}})
+                  {{body}}
+
+                  Reviewed By: {{approved_reviews_by | join(', ')}}
+                  GitHub Pull Request: https://github.com/production-assistant/mergify-test-repo/pull/{{number}}
+              merge_method: squash
+              name: default
+          delete_head_branch:
+              force: true
 queue_rules:
   - name: default
     queue_conditions:
       - base=main
       - -closed
       - -conflict
-      - label=mergeme
     merge_method: merge
