@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  pull_request:
+    types: [
+        # Default pull_request trigger types.
+        opened,
+        synchronize,
+        reopened,
+        # For linting labels. Note that a new job is kicked off per label
+        # added or removed.
+        labeled,
+        unlabeled,
+      ]
+  push:
+    branches: [main]
+
+jobs:
+  ready-to-merge-verified:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Sleep for 180 seconds
+        run: sleep 180
+  commit-integrity-verification:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Sleep for 180 seconds
+        run: sleep 180
