@@ -1,10 +1,161 @@
+# This is the config file for mergify, which drives many of the workflows surrounding the code review process at
+# Airtable (see go/codereview for more information).
+#
+# When you make changes to this file, please test your updated config against some PRs to verify that your changes
+# do not cause unexpected behavior.  The config tester is found at
+# https://dashboard.mergify.com/github/Hyperbase/repo/hyperbase/config-editor
+
+# These specify some defaults for various actions that mergify performs.
+defaults:
+    actions:
+        rebase:
+            # When mergify rebases, it needs to impersonate a user to perform the action.  If we do not specify one,
+            # mergify randomly picks a user in our org that has logged into the mergify dashboard to perform the action,
+            # which can cause unexpected surprises.  This ensures that a bot account performs the action.
+            #
+            # See https://docs.mergify.com/actions/rebase/#options for more information.
+            bot_account: production-assistant
+        queue:
+            # When mergify merges a pull request, it needs to impersonate a user to perform the action.  If we do not
+            # specify one, mergify randomly picks a user in our org that has logged into the mergify dashboard to
+            # perform the action, which can cause unexpected surprises.  This ensures that a bot account performs the
+            # action.
+            #
+            # See https://docs.mergify.com/actions/queue/#id2 for more information.
+            update_bot_account: production-assistant
+            allow_merging_configuration_change: true
+        backport:
+            # The Release-branch rule will evaluate "conflicts" label to enqueue, it is the default value of label_conflicts option.
+            # We don't use ignore_conflicts=true because it is a noop, which is confusing to developers.
+            title: '{{ title }} (backport of #{{ number }})'
+            body: '{{ body }}'
+            bot_account: '{{ author }}'
+        copy:
+            title: '{{ title }} (backport of #{{ number }})'
+            body: '{{ body }}'
+            bot_account: '{{ author }}'
+
 pull_request_rules:
+    # This is the normal merge path.
     - name: Automatic merge ⬇ on approval ✔
       conditions:
           - base=main
           - -closed
           - -conflict
           - label=mergeme
+          - and: &DefaultMergeConditions
+                - and: &DefaultMergeConditionsExSpecialApprovals
+                      # - '#approved-reviews-by>=1'
+                      - '#changes-requested-reviews-by=0'
+                      - and: &ChecksPass
+                            - check-success=ready-to-merge-verified
+                            - check-success=commit-integrity-verification
+                            # For builds which are merge-blocking with a corresponding trigger-X label,
+                            # either the label is absent or the build is successful
+                            - or:
+                                  - check-success=buildkite/hyperbase-enable-ekm-encryption
+                                  - -label=trigger-build-ekm
+                            - or:
+                                  - check-success=buildkite/hyperbase-post-merge-tests
+                                  - -label=trigger-post-merge-tests
+                            - or:
+                                  - check-success=buildkite/hyperbase-hotfix-tests
+                                  - -label=trigger-hotfix-tests
+                - and: &SpecialApprovals
+                      - or:
+                            - '-files~=csrf'
+                            - label=approved:auth-security
+                      - or:
+                            - '-files~=(content_security_policy_|add_csp_headers)(?!.*\.test\.).*\.tsx'
+                            - label=approved:auth-security
+                      - or:
+                            - '-label=attn:auth-security-reviewers:md5'
+                            - label=approved:auth-security
+                      - or:
+                            - '-files~=\/support_panel_routes\.tsx$'
+                            - label=approved:auth-security
+                      - or:
+                            # This is intended to only not match the terraform modules that manage
+                            # resources in the Data Infra AWS account. We still do want
+                            # hyperbase-infrastructure-reviewers to review Data-related changes
+                            # in the hyperbase AWS terraform modules (like IAM).
+                            - '-files~=^terraform/iam/.*data_'
+                            - approved-reviews-by=@Hyperbase/hyperbase-infrastructure-reviewers
+                      - or:
+                            # This rule is intended to require special approval for changes to
+                            # most shared modules. Pass if there are no files in terraform/modules
+                            # other than buildkite_queue and redis.
+                            - '-files~=^terraform/modules/(?!buildkite_queue|redis)'
+                            - approved-reviews-by=@Hyperbase/hyperbase-infrastructure-reviewers
+                      - or:
+                            # This rule is intended to include both
+                            #   a) the terraform modules that manage resource in the Data Infra AWS
+                            #      account such as terraform/data_*, and
+                            #   b) Data-related resources in the hyperbase AWS terraform modules,
+                            #      such as terraform/iam/iam_data_cross_account.tf
+                            - '-files~=^terraform/(data_etl_s3|data_hyper_etl|data_iam|data_vpc|data_iam|iam/iam_data_cross_account\.tf)'
+                            - approved-reviews-by=@Hyperbase/team-data-infra
+                      - or:
+                            - '-label=attn:team-storage:run-outside-deploy-migration'
+                            - label=approved:run-outside-deploy-migration
+                      - or:
+                            - '-files~=^server_shared/db_migrate/migrations/'
+                            - label=approved:db-migration
+                            - label=approved:run-outside-deploy-migration
+                      - or:
+                            - '-files~=(android|mobile_row_activity_feed|mobile_type_contracts)'
+                            - label=approved:android
+                            - approved-reviews-by=@Hyperbase/android
+                      - or:
+                            - '-files~=^admin/lib/security_sensitive_actions\.tsx'
+                            - approved-reviews-by=@Hyperbase/cloud-infrastructure
+                      - or:
+                            - '-files=admin/lib/aws_sso/aws_sso_role.tsx'
+                            - and:
+                                  - approved-reviews-by=@Hyperbase/cloud-infrastructure
+                                  - approved-reviews-by=@Hyperbase/hyperbase-infra-security-reviewers
+                      - or:
+                            - '-files=terraform/iam/airtable_sso_baseline_policy.tf'
+                            - and:
+                                  - approved-reviews-by=@Hyperbase/cloud-infrastructure
+                                  - approved-reviews-by=@Hyperbase/hyperbase-infra-security-reviewers
+                      - or:
+                            - '-files=admin/lib/aws_sso/aws_sso_users_inventory.tsx'
+                            - and:
+                                  - approved-reviews-by=@Hyperbase/cloud-infrastructure
+                                  - approved-reviews-by=@Hyperbase/hyperbase-infra-security-reviewers
+                      - or:
+                            - '-files~=^terraform/iam/team_.*_sso_policies\.tf$'
+                            - and:
+                                  - approved-reviews-by=@Hyperbase/cloud-infrastructure
+                                  - approved-reviews-by=@Hyperbase/hyperbase-infra-security-reviewers
+                      - or:
+                            - '-files~=^terraform/iam/iam_inspector_export\.tf'
+                            - approved-reviews-by=@Hyperbase/hyperbase-infra-security-reviewers
+                      - or:
+                            # This rule is intended to require special approval for changes to the
+                            # tfsec configuration.
+                            - '-files~=^terraform/tfsec/config\.yml'
+                            - approved-reviews-by=@Hyperbase/hyperbase-infra-security-reviewers
+                      - or:
+                            - '-files~=^server_shared/types/offline_enterprise_journal\.tsx'
+                            - approved-reviews-by=@Hyperbase/team-large-deployments
+                      - or:
+                            # All public API documentation/schema changes mutate public_open_api.yml
+                            - '-files~=^server_shared/apis/open_api/generated_public_open_api\.yml'
+                            - label=approved:public-api
+                            - approved-reviews-by=@Hyperbase/hyperbase-public-api-reviewers
+                      - or:
+                            - '-files~=^integration_tests/test_files/api_v0/.*\.tsx'
+                            - label=approved:public-api
+                            - approved-reviews-by=@Hyperbase/hyperbase-public-api-reviewers
+                      - or:
+                            - '-files~=(^(client_)?server_shared/audit_log/.*)'
+                            - label=approved:enterprise-audit-log
+                            - approved-reviews-by=@Hyperbase/enterprise-audit-log
+                      - or:
+                            - '-files=.github/mergify.yml'
+                            - approved-reviews-by=@Hyperbase/team-dev-effectiveness
       actions:
           queue:
               commit_message_template: |
@@ -12,15 +163,639 @@ pull_request_rules:
                   {{body}}
 
                   Reviewed By: {{approved_reviews_by | join(', ')}}
-                  GitHub Pull Request: https://github.com/production-assistant/mergify-test-repo/pull/{{number}}
+                  GitHub Pull Request: https://github.com/Hyperbase/hyperbase/pull/{{number}}
               merge_method: squash
               name: default
           delete_head_branch:
               force: true
+
+    # These are the special approvals for certain files/paths.
+    - name: Special approvals
+      conditions:
+          - base=main
+          - -closed
+          - and:
+                - label~=(mergeme|urgent-mergeme)
+                - and: *DefaultMergeConditionsExSpecialApprovals
+                - not:
+                      and: *SpecialApprovals
+      actions:
+          comment:
+              message: >
+                  This pull request is missing special approvals. Find the mergify summary at the bottom of the GitHub
+                  Pull Request conversation view.
+
+                  <img width="600" src="https://user-images.githubusercontent.com/280924/189459222-0a5f759c-199f-460b-b9d3-104b4407c997.png">
+
+                  Additional documentation can be found [here](https://docs.google.com/document/d/1_KTAQiYsqCbi4RMw_O59j8iieGQs2Vg2AibjMw9MIUA/edit#heading=h.bb22x2x5vp6a).
+
+    # This is the high priority merge path.
+    - name: High priority automatic merge ⬇ on approval ✔
+      conditions:
+          - base=main
+          - -closed
+          - -conflict
+          - label=urgent-mergeme
+          - and: *DefaultMergeConditions
+      actions:
+          queue:
+              commit_message_template: |
+                  {{title}} (#{{number}})
+                  {{body}}
+
+                  Reviewed By: {{approved_reviews_by | join(', ')}}
+                  GitHub Pull Request: https://github.com/Hyperbase/hyperbase/pull/{{number}}
+              merge_method: squash
+              name: default
+          delete_head_branch:
+              force: true
+
+    # This is the high priority merge path where all code changes reside in the analytics folder
+    # for Data Infra and Data Eng.
+    - name: High priority analytics-only automatic merge ⬇ on approval ✔
+      conditions:
+          - base=main
+          - -closed
+          - -conflict
+          - label=urgent-analytics-mergeme
+          - -files~=^(?!analytics/)
+          - '#approved-reviews-by>=1'
+          - '#changes-requested-reviews-by=0'
+          - 'check-success=Rule: PR message (post_check)'
+          - 'check-success=Rule: PR message still contains hints (post_check)'
+          - check-success=buildkite/hyperbase-analytics-github
+      actions:
+          queue:
+              commit_message_template: |
+                  {{title}} (#{{number}})
+                  {{body}}
+
+                  Reviewed By: {{approved_reviews_by | join(', ')}}
+                  GitHub Pull Request: https://github.com/Hyperbase/hyperbase/pull/{{number}}
+              merge_method: squash
+              name: analytics-only-urgent
+          delete_head_branch:
+              force: true
+
+    # This is the emergency escape hatch for merging.  It should be used sparingly.  It does not wait for code reviews
+    # or CI to pass.
+    - name: Emergency merge ⬇
+      conditions:
+          - base=main
+          - -closed
+          - label=mergenow-emergency
+      actions:
+          merge:
+              commit_message_template: |
+                  {{title}} (#{{number}})
+                  {{body}}
+
+                  Emergency merge
+                  GitHub Pull Request: https://github.com/Hyperbase/hyperbase/pull/{{number}}
+              method: squash
+          delete_head_branch:
+              force: true
+
+    # ======================================================================
+    #
+    # !!! ATTENTION !!!
+    #
+    # Always seek guidance from Team Dev Effectiveness before changing this
+    # rule as there will be potential compliance implications.
+    #
+    # ======================================================================
+    - name: Automatically merge bot-generated PRs
+      conditions:
+          - base=main
+          - -closed
+          - -conflict
+          - label=mergeme
+          # Langpack sync or test metadata PRs generated by the bot
+          - -files~=^(?!(lang/.+\.json|ci/test_metadata\.json))
+          - author=production-assistant
+          - and: *ChecksPass
+      actions:
+          queue:
+              commit_message_template: |
+                  {{title}} (#{{number}})
+                  {{body}}
+
+                  Low-risk bot-generated PRs automatically merged by Mergify
+                  GitHub Pull Request: https://github.com/Hyperbase/hyperbase/pull/{{number}}
+              merge_method: squash
+              name: default
+          delete_head_branch:
+              force: true
+
+    - name: Notify Team Dev Effectiveness when Mergify is unable to merge the bot-generated PRs
+      conditions:
+          - base=main
+          - -closed
+          - -conflict
+          - label=mergeme
+          # Langpack sync or test metadata PRs generated by the bot
+          - -files~=^(?!(lang/.+\.json|ci/test_metadata\.json))
+          - author=production-assistant
+          - check-failure~=.*
+      actions:
+          comment:
+              message: >
+                  This bot-generated PR cannot be automatically merged by Mergify. Please investigate @Hyperbase/team-dev-effectiveness.
+
+    # This if for fast hotfix queue so that CI and container build can run in parallel.
+    # It will embark the hotfix-backport queue and take priority over regular backport queue.
+    # Unlike backported PRs, Hotfix PRs can be opened against release branch without code reviews.
+    - name: Enqueue into mergequeue for release branch (hotfix).
+      conditions:
+          - base~=release-.*
+          - -closed
+          - -conflict
+          - '#approved-reviews-by>=1'
+          - '#changes-requested-reviews-by=0'
+          - label=hotfix-mergeme
+          - check-success=hotfix-commit-message
+      actions:
+          queue:
+              merge_method: fast-forward
+              name: hotfix-backport
+          delete_head_branch:
+              force: true
+
+    - name: Trigger additional tests for hotfix-mergeme
+      conditions:
+          - -closed
+          - label=hotfix-mergeme
+      actions:
+          label:
+              add:
+                  - trigger-hotfix-tests
+
+    # This is for auto-closing backports into release branches from main, which is not
+    # needed as we greatly reduced lead time. The hotfix SEV3+ process should be used instead.
+    - name: Ban enqueue into mergequeue for release branch.
+      conditions:
+          - base~=release-.*
+          - head~=mergify/bp/release-.*
+          - -closed
+          - label!=conflicts
+          - label!=hotfix-mergeme
+      actions:
+          close:
+              message: |
+                  This backport PR is automatically closed as we no longer support backport from main into release branches(@mergifyio backport release -*). If you need an rcfix or hotfix, follow this playbook (https://docs.google.com/document/d/1yoVKzTJt3J3MhCpZKz4ebgACuzptLmsxFi76GqEGM2A/edit#bookmark=id.g4nr03s8f14s).
+                  ```sh
+                  git fetch --quiet;
+                  git checkout ${releaseVersion} # Check https://airtable.com/system_fc41e001e6de/version or https://staging.airtable.com/system_fc41e001e6de/version
+                  git cherry-pick ${commitShaOnMain}
+                  git push origin HEAD:hotfix-v${releaseVersionDate}-${hotfixDescription}
+                  ```
+
+                  Then, follow Step 3+ in the SEV3+ Hotfix Instructions in the above link.
+
+    # This is for a main queue. It does not wait for code review.
+    # This will be used to merge backported pull requests from release branch to main, which already had approvals.
+    - name: Enqueue into mergequeue for backports to main
+      conditions:
+          - base=main
+          - head~=mergify/bp/.*
+          - -closed
+          - -conflict
+          - label!=hotfix-mergeme
+      actions:
+          queue:
+              commit_message_template: |
+                  {{title}} (#{{number}})
+                  {{body}}
+
+                  Reviewed By: {{approved_reviews_by | join(', ')}}
+                  GitHub Pull Request: https://github.com/Hyperbase/hyperbase/pull/{{number}}
+              merge_method: squash
+              name: default
+          delete_head_branch:
+              force: true
+
+    # This is required because conflicts in the release branch doesn't trigger the `conflicts` attribute on mergify. The
+    # conflict markers are explicitly merged in and we can't detect them easily.
+    - name: Announce release branch conflicts
+      conditions:
+          - base~=release-.*
+          - -closed
+          - label=conflicts
+      actions:
+          comment:
+              message: |
+                  Hi, @{{author}}, this backport pull request has merge conflict therefore cannot embark the merge
+                  queue.
+
+                  Please resolve the merge conflict by:
+
+                  ```sh
+                  # 1. fetch remote branches in this PR
+                  git fetch
+                  # 2. checkout the backport branch created by Mergify
+                  git checkout {{head}}
+                  # 3. Search for conflict markers and resolve them in your editor
+                  # :mag:
+                  # 4. Make a git commit
+                  # :keyboard:
+                  # 5. (Optional) It's a good insurance to merge in the release branch
+                  git merge origin/{{base}}
+                  # 6. Push your changes to the PR branch
+                  git push origin {{head}}
+                  ```
+
+                  After pushing the new commit to this branch, remove the "conflicts" label to embark the merge queue
+                  again. Please ask in #team-dev-effectiveness channel if you have any questions.
+
+    - name: Ask for post-hoc +1 to complete code review
+      conditions:
+          - merged
+          - base=main
+          - -head~=mergify/bp/main/pr.*
+          - '#approved-reviews-by=0'
+          - merged-at>1 days ago
+      actions:
+          comment:
+              message: |
+                  Hi, @{{author}}, this pull request is merged without code review approvals.
+                  Please ask someone to review this change and comment "+1" on this pull request as a post-hoc approval.
+
+                  This helps the company to meet the compliance requirements; there will be an audit alert if a post-hoc approval is not in-place.
+
+    # When there is a conflict, the GitHub UI displays a message but not very prominently.  This notification attempts
+    # to actively reach out to the developer that action is required.  Note that mergify only does this notification on
+    # a transition from a non-conflict state to a conflict state.  If a developer pushes to a conflict to a PR that
+    # already has a conflict, there will be no subsequent notification.
+    - name: Ask to resolve conflict
+      conditions:
+          - -closed
+          - conflict
+          - updated-at>7 days ago
+      actions:
+          comment:
+              message: Hi, @{{author}}, this pull request has conflicts with the base branch.  In this state, tests cannot be launched.
+
+    # Append an extra label to signify the merge conflict so that other tools can rely on this proxy to carry out other
+    # jobs.
+    - name: Add conflicts label when merge conflict is detected
+      conditions:
+          - -closed
+          - conflict
+          - label!=conflicts
+      actions:
+          label:
+              add:
+                  - conflicts
+
+    - name: Remove conflicts label after merge conflict is resolved
+      conditions:
+          - -closed
+          - -conflict
+          - label=conflicts
+      actions:
+          label:
+              remove:
+                  - conflicts
+
+    - name: Notify author on AI benchmarks failures
+      conditions:
+          - base=main
+          - -draft
+          - -closed
+          - check-failure=buildkite/ai-benchmarks
+          - -label=unsafe-ignore-ai-benchmarks
+      actions:
+          comment:
+              message: |
+                  Hi, @{{author}}, your PR failed AI benchmarks check.  You can examine the logs to see why.
+
+                  If you believe this was in error, you can tag your PR with `unsafe-ignore-ai-benchmarks` to bypass this check.
+
+                  Ping (@BryanJadot-at) if you believe the AI benchmarks should not have run for your PR.
+
+    # When we use speculative checks, the update (from main) + test prior to merge happens in a separate draft
+    # PR.  This provides a cleaner interface, but mergify only announces failures in the draft PR.  This hack (suggested
+    # by the mergify people) propagates the failure state back to the original PR.
+    - name: Notify author on queue failure
+      conditions:
+          - -closed
+          - -conflict
+          - 'check-failure=Queue: Embarked in merge train'
+      actions:
+          update:
+          comment:
+              message: |
+                  Hi, @{{author}}, your PR was removed from the merge queue. It may be due to either failed CI tests or conflicts with other PRs ahead in the queue.
+                  1. If your PR is behind the base branch, we have opportunistically merged in the latest base branch and re-triggered CI. You will see a mergify-generated commit around this comment if this is the case. Once CI passes, your PR will be re-queued automatically.
+                  2. If your PR is up-to-date with the base branch, please review the information below and take necessary actions.
+
+                  <details>
+                  <summary>Why was my PR de-queued?</summary>
+
+                  Find the Mergify Queue check<sup>[1]</sup>. That will take you to a page where you can view the failed checks<sup>[2]</sup> that caused your PR to be dequeued. We opportunistically batch PRs in the mergequeue, so the failure may have been caused by another PR in the same batch.
+
+                  Some potential reasons this is happening:
+                  1. One or more tests have become flaky independent of the PR. Use datadog test analytics to assess this possibility (see [guide](https://docs.google.com/document/d/1tBmijmDORgcbOzUg3e-vOabP5u6G9ISiKT5fLGLBvco)).
+                  2. A PR in the same batch is causing test flakiness. Run the flakiness stress test to assess this possibility (see [guide](https://docs.google.com/document/d/1OaTkAYqTv4GAFKnj3ZRkO8Jc11dnf2WemNRIo4IK7Ao)).
+                  3. A PR in the same batch has a logical conflict with its upstream branch {{base}}. If your PR is behind the upstream branch {{base}}, we have merged in the latest and re-triggered CI.
+                  4. This PR has a file conflict with other PRs in the mergequeue.  In this case, the "Mergify / Queue: Embarked in merge train" check will state that the "This pull request cannot be embarked for merge".  You will have to wait until PR ahead lands before you requeue your PR.
+                  5. A CI infra incident is happening, please check/report in [#help-github-and-ci](https://app.slack.com/client/T0255QF5E/C0246AK8856).
+
+                  If you are 100% certain that the failure is never ever related to this PR at all, you just want to embark into the merge queue:
+                  1. If your branch was updated either automatically or manually at any point in time since your PR was de-queued, you don't need to do anything for Mergify to re-evaluate.
+                  2. If your branch was *not* updated, you may retry the job by writing `@MergifyIO requeue` in a comment in your PR.
+
+                  <sup>1.</sup> <img width="600" src="https://github.com/Hyperbase/hyperbase/assets/116111036/0a0a104e-91ce-4fa1-b504-86e171ee0fac">
+                  <sup>2.</sup> ["Refined GitHub" browser extension](https://github.com/refined-github/refined-github) helps to easily find failed checks.
+
+                  </details>
+
+    # When someone applies the `mergeme` labels to a PR *before* it is approved, announce a warning to the PR that an
+    # approval will immediately trigger a warning message.
+    - name: Notify audience that the merge is automatic.
+      conditions:
+          - base=main
+          - -closed
+          - '#approved-reviews-by=0'
+          - label=mergeme
+      actions:
+          comment:
+              message: |
+                  ![](https://github.com/Hyperbase/macros/raw/988da27634bf3f049d9ab47b4fccc3b0cdb1e345/automerge.png)
+                  This pull request has been marked to automatically merge upon approval.
+
+    # When a PR is approved, has `mergeme` labels and has no pending CI builds but the merge conditions are still not met yet, announce
+    # a reminder to advise audience to open the `Summary` check to see the reasons.
+    - name: Notify audience that merge conditions are not met.
+      conditions:
+          - base=main
+          - -closed
+          - '#approved-reviews-by>=1'
+          - '#changes-requested-reviews-by=0'
+          - label=mergeme
+          # Require that Mergify checks are success to avoid commenting on stacked PR when the base PR merges
+          # because Mergify checks that only run when the base branch is main will not immediately show up.
+          # Example, https://github.com/Hyperbase/hyperbase/pull/88758#issuecomment-1633190569
+          - 'check-success=Rule: PR message (post_check)'
+          - 'check-success=Rule: PR message still contains hints (post_check)'
+          # Exclude any obvious failures and pendings. People do tend to notice these obvious ones.
+          # Ideally, we should use "check-present" but mergify does not provide that.
+          - not:
+                or:
+                    - check-pending=Inspect repo and trigger CI jobs
+                    - check-failure=Inspect repo and trigger CI jobs
+                    - check-pending=buildkite/hyperbase-github
+                    - check-failure=buildkite/hyperbase-github
+                    - check-pending=buildkite/hyperbase-enable-ekm-encryption
+                    - check-failure=buildkite/hyperbase-enable-ekm-encryption
+                    - check-pending=buildkite/hyperbase-analytics-github
+                    - check-failure=buildkite/hyperbase-analytics-github
+                    - check-pending=buildkite/hyperbase-post-merge-tests
+                    - check-failure=buildkite/hyperbase-post-merge-tests
+                    - check-pending=buildkite/ai-benchmarks
+                    - check-failure=buildkite/ai-benchmarks
+                    - check-pending=Tests for CI tools
+                    - check-failure=Tests for CI tools
+                    - check-pending=dev-laptop-setup / Runs the dev laptop setup
+                    - check-failure=dev-laptop-setup / Runs the dev laptop setup
+                    - check-pending=chromatic-deployment
+                    - check-failure=chromatic-deployment
+                    - check-pending=Dependency Security Review
+                    - check-failure=Dependency Security Review
+                    - check-pending=Label PRs for content-based rules
+                    - check-failure=Label PRs for content-based rules
+                    - 'check-pending~=UI Tests(: hyperbase)?'
+                    - 'check-failure~=UI Tests(: hyperbase)?'
+          - not:
+                and: *DefaultMergeConditionsExSpecialApprovals
+      actions:
+          comment:
+              message: |
+                  This pull request's merge conditions are not met yet. Open the **Summary** check to see which conditions aren't met.
+                  ![](https://github.com/Hyperbase/hyperbase/assets/116111036/7108c365-df65-42fa-8594-5df66b7d3781)
+
+    # When someone applies the `mergeme` or `mergenow-emergency` labels to a PR that's not targeted at `main`, this
+    # announces that the merge will not happen.
+    - name: Notify audience that the merge will not happen as the PR's base branch is not `main`.
+      conditions:
+          - base!=main
+          - -closed
+          - or:
+                - label=mergeme
+                - label=mergenow-emergency
+      actions:
+          comment:
+              message: >
+                  The base branch of this PR is not main, so the `mergeme`/`mergenow-emergency` labels have no effect.
+                  This will only get merged after the base branch is merged.  Consider changing the base branch of this
+                  PR if this is not intended.
+
+    # Delete head branch for closed pull requests. Unneeded branches slow down the github/git.
+    # Note: head branches for merged pull requests are deleted separately.
+    - name: Delete head branch for closed pull requests
+      conditions:
+          - closed
+      actions:
+          delete_head_branch:
+              force: true
+
+    # Label pull request that hasn't been updated for a long time. This also helps users filter stale pull requests.
+    # updated-at condition cannot have multiple actions if any action updates the pull request.
+    - name: Label stale pull request
+      conditions:
+          - -closed
+          - updated-at<90 days ago
+      actions:
+          label:
+              add:
+                  - stale
+
+    # Warn pull request that is labelled because of being stale.
+    - name: Warn labelled stale pull request
+      conditions:
+          - -closed
+          - label=stale
+      actions:
+          comment:
+              message: |
+                  This pull request will be automatically closed in 7 days due to the addition of the `stale` label.
+
+                  The `stale` label is applied either because it hasn't been updated for over 90 days or because someone manually added it.
+
+                  If you need more time to update it, please remove the `stale` label.
+
+    # Close pull request that is labelled and warned because of being stale.
+    # updated-at condition cannot have multiple actions if any action updates the pull request.
+    - name: Close labelled stale pull request
+      conditions:
+          - -closed
+          - label=stale
+          - updated-at<7 days ago
+      actions:
+          close:
+              message: |
+                  This pull request is automatically closed as `stale` label has been present for 7 days. Feel free to remove the `stale` label and reopen it if necessary.
+
+                  You can see the list of your automatically closed pull requests [here](https://github.com/Hyperbase/hyperbase/pulls?q=is%3Apr+author%3A%40me+is%3Aclosed+is%3Aunmerged+label%3Astale).
+
+                  If you just need a place to store your temporary work, consider using a branch without creating a pull request.
+
+    # Publish draft pull request as ready for review after checks pass if it is labelled with 'publish-when-ready'.
+    - name: Publish as ready for review when ready
+      conditions:
+          - draft
+          - label=publish-when-ready
+          - -conflict
+          - and: *ChecksPass
+      actions:
+          edit:
+              draft: false
+
+    # This rule is for detecting PRs that do not have the required format -- a section summarizing the PR and a section
+    # with the test plan. If Manual QA is requested, a QA Test Plan w/ instructions for the QA testers should also be present.
+    - name: PR message
+      conditions:
+          - base=main
+          - -closed
+      actions:
+          post_check:
+              success_conditions:
+                  - 'body~=^([\n\s]*\n)*# Summary\s*\n(.|\n)*\n# Test [Pp]lan\s*\n+.+'
+                  - '-title~=\!\!skip[-_]?ci$'
+              title: >
+                  {% if check_succeed %}
+                  PR message follows required format.
+                  {% else %}
+                  PR message does not follow required format.
+                  {% endif %}
+              summary: |
+                  {% if not check_succeed %}
+                  Hi, @{{author}}, your pull request message must follow the required format, which includes a Summary section and a Test
+                  Plan section.  The hints in the pull request template should be removed as they do get written to the
+                  commit log.
+
+                  There should be no text before the "Summary" section.
+
+                  ~~~
+                  # Summary
+
+                  {Your summary goes here}
+
+                  # Test Plan
+
+                  {Your test plan goes here}
+                  ~~~
+                  {% endif %}
+
+    - name: PR message still contains hints
+      conditions:
+          - base=main
+          - -closed
+      actions:
+          post_check:
+              success_conditions:
+                  # The hints should be removed.
+                  - '-body~=This section will be prominently visible in the github pull request'
+                  - '-body~=Otherwise, please detail how you manually tested this change'
+              title: >
+                  {% if check_succeed %}
+                  PR message follows required format.
+                  {% else %}
+                  PR message still contains the hints from the template.
+                  {% endif %}
+              summary: >
+                  {% if not check_succeed %}
+                  Hi, @{{author}}, your pull request message cannot contain hints from the template. Please fill out a the relevant portions
+                  of the template.
+
+                  {% endif %}
+
+    # This rule dismisses approvals when someone re-requests a review from a reviewer who has already approved.
+    - name: Dismiss reviews
+      conditions:
+          - base=main
+          - -closed
+      actions:
+          dismiss_reviews:
+              approved: from_requested_reviewers
+              changes_requested: false
+              message: Approval dismissed as review got re-requested.
+              when: always
+
+# Queue Partition Rules
+# https://docs.mergify.com/actions/queue/#using-partition-rules-to-handle-different-projects-in-a-monorepo
+# - For each queue rule, the merge_condition needs to specify all partition's conditions.
+# - Each partition will have its own separte queue such that a partition's enqueue/merge events do not cause another
+#   partition to reest.
+# - Partitions need to cover all PR scenario, or have a fallback partition.
+# - When a PR satisfies conditions in multiple queues, it needs multiple checks to pass to be merged. In this case if
+#   queue jumping happens it will only reset the checks for the partition that the PR is currently in.
+#
+# The conditions should keep in sync with what's defined in .github/workflows/pull_request.yml
+partition_rules:
+    - name: analytics
+      conditions:
+          - or:
+                - files~=^analytics/
+                - files=.github/workflows/pull_request.yml
+                - files~=^ci/buildkite/analytics
+
+    - name: main
+      conditions:
+          # Note: - before files condition negates the regex matching
+          - -files~=^analytics/
+
 queue_rules:
-  - name: default
-    queue_conditions:
-      - base=main
-      - -closed
-      - -conflict
-    merge_method: merge
+    # This is for merging into the default branch.
+    - name: default
+      merge_conditions:
+          - and: &SharedDefaultQueueMergeConditions
+                - check-success=Tests for CI tools
+                - check-success=dev-laptop-setup / Runs the dev laptop setup
+                - or:
+                      - check-success=chromatic-deployment
+                      - check-skipped=chromatic-deployment
+          - or: &PartitionsMergeConditions
+                - and: &MainQueuePartitionMergeConditions
+                      - queue-partition-name=main
+                      - check-success=buildkite/hyperbase-github
+                      - check-success=buildkite/hyperbase-enable-ekm-encryption
+                - and: &AnalyticsPartitionMergeConditions
+                      - queue-partition-name=analytics
+                      - check-success=buildkite/hyperbase-analytics-github
+      priority_rules:
+          - name: urgent-mergeme
+            conditions:
+                - label=urgent-mergeme
+            priority: high
+      speculative_checks: 6
+      batch_size: 5
+      batch_max_failure_resolution_attempts: 0
+      allow_inplace_checks: false
+      # BK jobs can run longer than 30 min and gets spot interrupted. The total time including retries will be longer
+      # than 60m.
+      checks_timeout: 90 m
+
+    # This queue is for merging PRs that have all changes residing in the analytics folder only
+    # for the Data Infra and Data Eng team to make urgent changes unrelated to the main Airtable product.
+    # This is listed as the first queue in queue_rules so that it is processed before the default queue.
+    - name: analytics-only-urgent
+      merge_conditions:
+          - and: *SharedDefaultQueueMergeConditions
+          - or: *PartitionsMergeConditions
+      allow_inplace_checks: false
+      checks_timeout: 90 m
+
+    # This is for fast-forward merging into the production release branch for backport/copy PRs.
+    - name: hotfix-backport
+      merge_conditions:
+          - and: *SharedDefaultQueueMergeConditions
+          - or:
+                - and:
+                      - queue-partition-name=main
+                      - check-success=buildkite/hyperbase-hotfix-tests
+                - and: *AnalyticsPartitionMergeConditions
+          - check-success=hotfix-commit-message
+      batch_size: 1
+      allow_inplace_checks: true
+      checks_timeout: 90 m
