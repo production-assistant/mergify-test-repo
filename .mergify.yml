@@ -24,3 +24,4 @@ queue_rules:
       - -closed
       - -conflict
     merge_method: merge
+    speculative_checks: 3
