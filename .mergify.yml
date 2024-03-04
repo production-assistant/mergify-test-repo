@@ -17,11 +17,30 @@ pull_request_rules:
               name: default
           delete_head_branch:
               force: true
+
+partition_rules:
+  - name: fallback
+    fallback_partition: true
+
+  - name: projectA
+    conditions:
+      - files~=^projectA/
+
+  - name: projectB
+    conditions:
+      - files~=^projectB/
+
 queue_rules:
   - name: default
     queue_conditions:
-      - base=main
-      - -closed
-      - -conflict
+      - or:
+        - partition-name!=projectA
+        - base=main
+      - or:
+        - partition-name!=projectB
+        - base=main
+      # - base=main
+      # - -closed
+      # - -conflict
     merge_method: merge
     speculative_checks: 3
